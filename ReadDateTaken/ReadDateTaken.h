@@ -486,6 +486,10 @@ CMask m_Mask;
 CExtension m_Extension;
 
 /////////////////////////////////////////////////////////////////////////////
+// when true, sub-folders will be processed as well as the base folder
+bool m_bRecurse;
+
+/////////////////////////////////////////////////////////////////////////////
 // the new folder under the image folder to contain the corrected images
 static inline CString GetCorrectedFolder()
 {

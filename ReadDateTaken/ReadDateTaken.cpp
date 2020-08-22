@@ -67,12 +67,25 @@ void RecursePath( LPCTSTR path )
 	const CString csCorrected = GetCorrectedFolder();
 	const int nCorrected = GetCorrectedFolderLength();
 
-	CString csPathname( path );
+	// get the folder which will trim any wild card data
+	CString csPathname = GetFolder( path );
+
+	// wild cards are in use if the pathname does not equal the given path
+	const bool bWildCards = csPathname != path;
 	csPathname.TrimRight( _T( "\\" ) );
+	CString csData;
 
 	// build a string with wild-cards
 	CString strWildcard;
-	strWildcard.Format( _T( "%s\\*.*" ), path );
+	if ( bWildCards )
+	{
+		csData = GetDataName( path );
+		strWildcard.Format( _T( "%s\\%s" ), csPathname, csData );
+
+	} else // no wild cards, just a folder
+	{
+		strWildcard.Format( _T( "%s\\*.*" ), csPathname );
+	}
 
 	// start trolling for files we are interested in
 	CFileFind finder;
@@ -90,17 +103,34 @@ void RecursePath( LPCTSTR path )
 		// if it's a directory, recursively search it
 		if ( finder.IsDirectory() )
 		{
-			const CString str = finder.GetFilePath();
+
+			// if the user did not specify recursing into sub-folders
+			// then we can ignore any directories found
+			if ( m_bRecurse == false )
+			{
+				continue;
+			}
 
 			// do not recurse into the corrected folder
+			const CString str = finder.GetFilePath().TrimRight( _T( "\\" ) );;
 			if ( str.Right( nCorrected ) == csCorrected )
 			{
 				continue;
 			}
 
-			// recurse into the new directory
-			RecursePath( str );
+			// if wild cards in use, build a path with the wild cards
+			if ( bWildCards )
+			{
+				CString csPath;
+				csPath.Format( _T( "%s\\%s" ), str, csData );
 
+				// recurse into the new directory with wild cards
+				RecursePath( csPath );
+
+			} else // recurse into the new directory
+			{
+				RecursePath( str );
+			}
 		} else // write the properties if it is a valid extension
 		{
 			const CString csPath = finder.GetFilePath();
@@ -363,24 +393,36 @@ int _tmain( int argc, TCHAR* argv[], TCHAR* envp[] )
 	}
 
 	CStdioFile fOut( stdout );
-	if ( argc != 3 )
+
+	// if the expected number of parameters are not found
+	// give the user some usage information
+	if ( argc != 3 && argc != 4 )
 	{
 		fOut.WriteString( _T( ".\n" ) );
 		fOut.WriteString
 		(
-			_T( "FixDateTaken, Copyright (c) 2020, " )
+			_T( "ReadDateTaken, Copyright (c) 2020, " )
 			_T( "by W. T. Block.\n" )
 		);
 		fOut.WriteString( _T( ".\n" ) );
 		fOut.WriteString( _T( "Usage:\n" ) );
 		fOut.WriteString( _T( ".\n" ) );
-		fOut.WriteString( _T( ".  FixDateTaken pathname mask\n" ) );
+		fOut.WriteString( _T( ".  ReadDateTaken pathname mask [recurse_folders]\n" ) );
 		fOut.WriteString( _T( ".\n" ) );
 		fOut.WriteString( _T( "Where:\n" ) );
 		fOut.WriteString( _T( ".\n" ) );
 		fOut.WriteString
 		(
 			_T( ".  pathname is the root of the tree to be scanned\n" )
+			_T( ".  may contain wild cards like the following:\n" )
+			_T( ".    \"c:\\Picture\\DisneyWorldMary2 *.JPG\"\n" )
+			_T( ".  will process all files with that pattern, or\n" )
+			_T( ".    \"c:\\Picture\\DisneyWorldMary2 231.JPG\"\n" )
+			_T( ".  will process a single defined image file.\n" )
+			_T( ".  (NOTE: using wild cards will prevent recursion\n" )
+			_T( ".    into sub-folders because the folders will likely\n" )
+			_T( ".    not fall into the same pattern and therefore\n" )
+			_T( ".    sub-folders will not be found by the search).\n" )
 		);
 		fOut.WriteString
 		(
@@ -406,22 +448,55 @@ int _tmain( int argc, TCHAR* argv[], TCHAR* envp[] )
 			_T( ".    WP_YYYYMMDD_hh_mm_ss\n" )
 			_T( ".      for files named like: WP_19501117_11_40_56_Pro.jpg\n" )
 		);
+		fOut.WriteString
+		(
+			_T( ".  recurse_folders is optional true | false parameter\n" )
+			_T( ".    to include sub-folders or not (default is false).\n" )
+			_T( ".  (NOTE: using wild cards will prevent recursion\n" )
+			_T( ".    into sub-folders because the folders will likely\n" )
+			_T( ".    not fall into the same pattern and therefore\n" )
+			_T( ".    sub-folders will not be found by the search).\n" )
+		);
 		fOut.WriteString( _T( ".\n" ) );
 		return 3;
 	}
 
 	// display the executable path
 	CString csMessage;
-	csMessage.Format( _T( "Executable pathname: %s\n" ), argv[ 0 ] );
-	fOut.WriteString( _T( ".\n" ) );
-	fOut.WriteString( csMessage );
-	fOut.WriteString( _T( ".\n" ) );
+	//csMessage.Format( _T( "Executable pathname: %s\n" ), argv[ 0 ] );
+	//fOut.WriteString( _T( ".\n" ) );
+	//fOut.WriteString( csMessage );
+	//fOut.WriteString( _T( ".\n" ) );
 
-	// retrieve the pathname and validate the pathname exists
-	CString csPath = argv[ 1 ];
-	if ( !::PathFileExists( csPath ) )
+	// retrieve the pathname which may include wild cards
+	CString csPathParameter = argv[ 1 ];
+
+	// trim off any wild card data
+	const CString csFolder = GetFolder( csPathParameter );
+
+	// test for current folder character (a period)
+	bool bExists = csPathParameter == _T( "." );
+
+
+	// if it is a period, add a wild card of *.* to retrieve
+	// all folders and files
+	if ( bExists )
 	{
-		csMessage.Format( _T( "Invalid pathname: %s\n" ), csPath );
+		csPathParameter = _T( ".\\*.*" );
+
+		// if it is not a period, test to see if the folder exists
+	} else
+	{
+		if ( ::PathFileExists( csFolder ) )
+		{
+			bExists = true;
+		}
+	}
+
+	// give feedback to the user
+	if ( !bExists )
+	{
+		csMessage.Format( _T( "Invalid pathname: %s\n" ), csPathParameter );
 		fOut.WriteString( _T( ".\n" ) );
 		fOut.WriteString( csMessage );
 		fOut.WriteString( _T( ".\n" ) );
@@ -429,7 +504,7 @@ int _tmain( int argc, TCHAR* argv[], TCHAR* envp[] )
 
 	} else
 	{
-		csMessage.Format( _T( "Given pathname: %s\n" ), csPath );
+		csMessage.Format( _T( "Given pathname: %s\n" ), csPathParameter );
 		fOut.WriteString( _T( ".\n" ) );
 		fOut.WriteString( csMessage );
 		fOut.WriteString( _T( ".\n" ) );
@@ -448,12 +523,29 @@ int _tmain( int argc, TCHAR* argv[], TCHAR* envp[] )
 		fOut.WriteString( csMessage );
 		fOut.WriteString( _T( ".\n" ) );
 		return 5;
+
 	} else
 	{
 		csMessage.Format( _T( "The mask parameter is: %s\n" ), m_Mask.Mask );
 		fOut.WriteString( _T( ".\n" ) );
 		fOut.WriteString( csMessage );
 		fOut.WriteString( _T( ".\n" ) );
+	}
+
+	// default to no recursion through sub-folders
+	m_bRecurse = false;
+
+	// test for the recursion parameter
+	if ( argc == 4 )
+	{
+		CString csRecurse = argv[ 3 ];
+		csRecurse.MakeLower();
+
+		// if the text is "true" the turn on recursion
+		if ( csRecurse == _T( "true" ) )
+		{
+			m_bRecurse = true;
+		}
 	}
 
 	// start up COM
@@ -465,7 +557,7 @@ int _tmain( int argc, TCHAR* argv[], TCHAR* envp[] )
 
 	// crawl through directory tree defined by the command line
 	// parameter trolling for image files
-	RecursePath( csPath );
+	RecursePath( csPathParameter );
 
 	// clean up references to GDI+
 	TerminateGdiplus();
